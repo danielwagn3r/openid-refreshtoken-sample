@@ -1,33 +1,38 @@
-using IdentityModel;
 using IdentityModel.Client;
 using RefreshClient;
 
 var host = Host.CreateDefaultBuilder(args)
     .ConfigureServices((hostContext, services) =>
     {
+        // default cache
+        services.AddDistributedMemoryCache();
+        
+        services.AddClientCredentialsTokenManagement();
+        services.AddSingleton(new DiscoveryCache(hostContext.Configuration["Sts:Authority"]));
+
         // Configure OAuth access Token management
-        services.AddAccessTokenManagement(options =>
-        {
-            options.Client.Clients.Add("sts", new ClientCredentialsTokenRequest
+        services.AddClientCredentialsTokenManagement()
+            .AddClient("sts", client =>
             {
-                Address = hostContext.Configuration["Sts:TokenEndpoint"],
-                ClientId = hostContext.Configuration["Sts:ClientId"],
-                ClientSecret = hostContext.Configuration["Sts:ClientSecret"],
-                GrantType = OidcConstants.GrantTypes.ClientCredentials,
-                AuthorizationHeaderStyle = BasicAuthenticationHeaderStyle.Rfc6749,
-                ClientCredentialStyle = ClientCredentialStyle.AuthorizationHeader,
-                Scope = "calc:double",
-                Parameters = new Parameters()
+                var sp = services.BuildServiceProvider();
+
+                var _cache = sp.GetService<DiscoveryCache>();
+
+                client.TokenEndpoint = _cache.GetAsync().GetAwaiter().GetResult().TokenEndpoint;
+                client.ClientId = hostContext.Configuration["Sts:ClientId"];
+                client.ClientSecret = hostContext.Configuration["Sts:ClientSecret"];
+
+                client.Scope = "calc:double";
+
+                client.Parameters = new Parameters
                 {
-                    new KeyValuePair<string, string>("audience", hostContext.Configuration["Api:Audience"])
-                }
+                    new("audience", hostContext.Configuration["Api:Audience"])
+                };
             });
-        });
 
         // Configure http client
-        services.AddHttpClient("client",
-                client => { client.BaseAddress = new Uri(hostContext.Configuration["Api:BaseAddress"]); })
-            .AddClientAccessTokenHandler("sts");
+        services.AddClientCredentialsHttpClient("client", "sts",
+            client => { client.BaseAddress = new Uri(hostContext.Configuration["Api:BaseAddress"]); });
 
         services.AddHostedService<Worker>();
     })
