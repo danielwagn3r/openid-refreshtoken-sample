@@ -1,4 +1,6 @@
-namespace RefreshClient;
+using System.Net;
+
+namespace WorkerClient;
 
 public class Worker : BackgroundService
 {
@@ -19,16 +21,23 @@ public class Worker : BackgroundService
         {
             _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
 
-            using (var result = await _httpClient.GetAsync("double/3"))
+            using (var result = await _httpClient.GetAsync("/Double/3"))
             {
-                result.EnsureSuccessStatusCode();
+                try
+                {
+                    result.EnsureSuccessStatusCode();
 
-                var content = await result.Content.ReadAsStringAsync();
+                    var content = await result.Content.ReadAsStringAsync();
 
-                _logger.LogInformation("Result: {Content}", content);
+                    _logger.LogInformation("Result: {Content}", content);
+                }
+                catch (HttpRequestException e)
+                {
+                    _logger.LogError(e, "HTTP Status Code {StatusCode} '{StatusCodeText}'", (int)e.StatusCode, e.StatusCode);
+                }
             }
 
-            await Task.Delay(1000, stoppingToken);
+            await Task.Delay(2000, stoppingToken);
         }
     }
 }

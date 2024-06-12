@@ -1,41 +1,66 @@
 using IdentityModel.Client;
-using RefreshClient;
+using Serilog;
+using WorkerClient;
 
-var host = Host.CreateDefaultBuilder(args)
-    .ConfigureServices((hostContext, services) =>
-    {
-        // default cache
-        services.AddDistributedMemoryCache();
-        
-        services.AddClientCredentialsTokenManagement();
-        services.AddSingleton(new DiscoveryCache(hostContext.Configuration["Sts:Authority"]));
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
 
-        // Configure OAuth access Token management
-        services.AddClientCredentialsTokenManagement()
-            .AddClient("sts", client =>
-            {
-                var sp = services.BuildServiceProvider();
+try
+{
+    var host = Host.CreateDefaultBuilder(args)
+        .UseSerilog((context, services, configuration) => configuration
+            .ReadFrom.Configuration(context.Configuration)
+            .ReadFrom.Services(services)
+            .Enrich.FromLogContext())
+        .ConfigureServices((hostContext, services) =>
+        {
+            // default cache
+            services.AddDistributedMemoryCache();
 
-                var _cache = sp.GetService<DiscoveryCache>();
+            services.AddClientCredentialsTokenManagement();
+            services.AddSingleton(new DiscoveryCache(hostContext.Configuration["Sts:Authority"]));
 
-                client.TokenEndpoint = _cache.GetAsync().GetAwaiter().GetResult().TokenEndpoint;
-                client.ClientId = hostContext.Configuration["Sts:ClientId"];
-                client.ClientSecret = hostContext.Configuration["Sts:ClientSecret"];
-
-                client.Scope = "calc:double";
-
-                client.Parameters = new Parameters
+            // Configure OAuth access Token management
+            services.AddClientCredentialsTokenManagement()
+                .AddClient("sts", client =>
                 {
-                    new("audience", hostContext.Configuration["Api:Audience"])
-                };
-            });
+                    var sp = services.BuildServiceProvider();
 
-        // Configure http client
-        services.AddClientCredentialsHttpClient("client", "sts",
-            client => { client.BaseAddress = new Uri(hostContext.Configuration["Api:BaseAddress"]); });
+                    var _cache = sp.GetService<DiscoveryCache>();
 
-        services.AddHostedService<Worker>();
-    })
-    .Build();
+                    client.TokenEndpoint = _cache.GetAsync().GetAwaiter().GetResult().TokenEndpoint;
+                    client.ClientId = hostContext.Configuration["Sts:ClientId"];
+                    client.ClientSecret = hostContext.Configuration["Sts:ClientSecret"];
 
-await host.RunAsync();
+                    client.Scope = "calc:double";
+
+                    client.Resource = hostContext.Configuration["Api:Audience"];
+
+                    client.Parameters = new()
+                    {
+                        { "audience", hostContext.Configuration["Api:Audience"] }
+                    };
+                });
+
+            // Configure http client
+            services.AddHttpClient("client",
+                    client => { client.BaseAddress = new Uri(hostContext.Configuration["Api:BaseAddress"]); })
+                .AddClientCredentialsTokenHandler("sts");
+
+            // services.AddTransient<IClientAssertionService, ClientAssertionService>();
+
+            services.AddHostedService<Worker>();
+        })
+        .Build();
+
+    await host.RunAsync();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "An unhandled exception occured during bootstrapping");
+}
+finally
+{
+    Log.CloseAndFlush();
+}
